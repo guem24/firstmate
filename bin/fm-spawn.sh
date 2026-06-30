@@ -354,6 +354,15 @@ if tmux list-windows -t "$SES" -F '#{window_name}' | grep -qx "$W"; then
 fi
 
 tmux new-window -d -t "$SES" -n "$W" -c "$PROJ_ABS"
+# Cosmetic per-window label for the captain's fleet viewer (bin/fm-fleet.sh): a
+# readable "project · task" string. This is a tmux @-prefixed user option only;
+# the window NAME stays "fm-$ID", so targeting, the watcher, and recovery are
+# unaffected. Best-effort: never fail the spawn over a label.
+case "$KIND" in
+  ship) FM_LABEL="$(basename "$PROJ_ABS") · $ID" ;;
+  *)    FM_LABEL="$(basename "$PROJ_ABS") · $ID ($KIND)" ;;
+esac
+tmux set-option -w -t "$T" @fm_label "$FM_LABEL" 2>/dev/null || true
 if [ "$KIND" != secondmate ]; then
   tmux send-keys -t "$T" 'treehouse get' Enter
 

@@ -497,7 +497,11 @@ bin/fm-watch-arm.sh --restart  # home-scoped forced restart; never a broad pkill
 bin/fm-watch.sh            # the watcher itself; exits with: signal|stale|check|heartbeat
 bin/fm-wake-drain.sh       # drain queued wake records at turn start; asserts guard after draining
 bin/fm-crew-state.sh <id>  # one-line current-state read; reconciles matching run-step, pane, and status log
+bin/fm-fleet.sh [session]  # captain's live viewer: attach a terminal to the crew session (default "firstmate") with a descriptive status bar
 ```
+
+Each worker runs in its own tmux window named `fm-<id>`; `fm-spawn` also tags the window with an `@fm_label` user option (a readable "project · task" string) used only by the fleet viewer's status bar, never for targeting.
+When the captain wants to watch the workers live, point them at `bin/fm-fleet.sh` from a separate terminal tab; it ensures the crew session exists, tunes a session-scoped status bar so each window shows its label, and attaches (or switches if already in tmux). Detaching with `Ctrl-b d` leaves every worker running.
 
 On wake, in order of cheapness:
 
