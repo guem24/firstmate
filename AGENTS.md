@@ -720,7 +720,7 @@ Update it on every dispatch, completion, and decision.
 ## Done
 - [x] <id> - <one line> - <https://github.com/owner/repo/pull/number> (merged <date>)
 - [x] <id> - <one line> - local main (merged <date>)
-- [x] <id> - <one line> - data/<id>/report.md (reported <date>)
+- [x] <id> - <one line> - data/archive/<project>/<id>/report.md (reported <date>)
 ```
 
 Re-evaluate Queued on every teardown and every heartbeat: anything whose blocker is gone and whose time/date gate, if any, has arrived gets dispatched.
