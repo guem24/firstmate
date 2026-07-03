@@ -82,7 +82,8 @@ data/                personal fleet records; LOCAL, gitignored as a whole
   projects.md        thin fleet navigation registry; firstmate-private, parsed by fm-project-mode.sh (section 6)
   secondmates.md      secondmate routing table; firstmate-private, maintained by fm-home-seed.sh (section 6)
   <id>/brief.md      per-task crewmate brief, or per-secondmate charter brief when kind=secondmate
-  <id>/report.md     scout task deliverable, written by the crewmate; survives teardown
+  <id>/report.md     scout task deliverable, written by the crewmate; on a successful ship/scout teardown the whole <id>/ folder moves into data/archive/<project>/<id>/, preserving the report
+  archive/<project>/<id>/  finished ship/scout task folders, swept off the surface of data/ by teardown (basename of meta project=, or "misc" when unresolvable); collision-safe, never clobbered
 projects/            cloned repos; gitignored; READ-ONLY for you
 state/               volatile runtime signals; gitignored
   <id>.status        appended by crewmates: "<state>: <note>" wake-event lines, not current-state truth
@@ -532,6 +533,7 @@ Genuinely unlanded work (no merged PR head containing the local work and content
 Known benign case: after an external-PR task, a squash merge leaves the branch commits reachable only on the contributor's fork; add the fork as a remote and fetch (`git remote add fork <fork url> && git fetch fork`), then retry - never reach for `--force`.
 After a successful PR-based teardown, it also runs `bin/fm-fleet-sync.sh` for that project, best-effort, so safe clone states catch up to the merge, clean detached ancestor drift self-heals, and the just-merged branch, now gone on the remote and free of its worktree, is pruned immediately.
 Unsafe drift is reported as `STUCK:` and left untouched.
+On the success path only (never on a refusal, never for secondmates), teardown then archives the task's `data/<id>/` folder off the surface of `data/`, moving it to `data/archive/<project>/<id>/` where `<project>` is the basename of the task's meta `project=` path (or `misc` when unresolvable); a plain `mv` preserves `brief.md` and any `report.md`, an existing archive target is left untouched with a warning rather than clobbered, and the Done reminder points at the archived `report.md` path.
 Then update the backlog using the teardown reminder: run `tasks-axi done` when the default tasks-axi backend is active and compatible, otherwise move the task to Done in `data/backlog.md` manually with the full `https://...` PR URL or local merge note and date and keep Done to the 10 most recent.
 Re-evaluate the queue and dispatch only queued work whose blockers are gone and whose time/date gate, if any, has arrived.
 
@@ -550,8 +552,8 @@ A scout task follows Intake, Spawn, and Supervise exactly as above - scaffold th
 
 - There is no Validate or PR-ready stage. When the crewmate's status says `done`, read `data/<id>/report.md`.
 - Relay the findings to the captain: plain chat for a focused answer, lavish-axi when the report has structure worth a visual (multiple findings, options, a plan).
-- Tear down immediately - no merge gate. `bin/fm-teardown.sh` allows a scout worktree's scratch commits and dirty files once the report exists; if the report is missing, it refuses, because the findings are the work product.
-- Record it in Done with the report path instead of a PR link using `tasks-axi done` when the default tasks-axi backend is active and compatible, otherwise hand-edit `data/backlog.md` and keep Done to the 10 most recent, then re-evaluate the queue and dispatch only queued work whose blockers are gone and whose time/date gate, if any, has arrived.
+- Tear down immediately - no merge gate. `bin/fm-teardown.sh` allows a scout worktree's scratch commits and dirty files once the report exists; if the report is missing, it refuses, because the findings are the work product. On success it archives `data/<id>/` (report included) into `data/archive/<project>/<id>/`, so the report lives on at the archived path.
+- Record it in Done with the report path instead of a PR link using `tasks-axi done` when the default tasks-axi backend is active and compatible, otherwise hand-edit `data/backlog.md` and keep Done to the 10 most recent, then re-evaluate the queue and dispatch only queued work whose blockers are gone and whose time/date gate, if any, has arrived. The recorded report path is the archived `data/archive/<project>/<id>/report.md`.
 
 **Promotion.** When a scout's findings reveal shippable work (a reproduced bug with a clear fix) and the captain wants it shipped, promote the task in place instead of respawning: run `bin/fm-promote.sh <id>` (flips `kind=` to ship in meta, restoring teardown's full protection), then send the crewmate its ship instructions - inventory scratch state, reset to a clean default-branch base, carry over only intended fix changes, create branch `fm/<id>`, implement, and report `done` according to the project's delivery mode.
 The crewmate keeps its worktree, loaded context, and repro, but the ship branch must start from a clean base with only intended changes; scratch commits and debug edits from the scout phase never ride along.
@@ -718,7 +720,7 @@ Update it on every dispatch, completion, and decision.
 ## Done
 - [x] <id> - <one line> - <https://github.com/owner/repo/pull/number> (merged <date>)
 - [x] <id> - <one line> - local main (merged <date>)
-- [x] <id> - <one line> - data/<id>/report.md (reported <date>)
+- [x] <id> - <one line> - data/archive/<project>/<id>/report.md (reported <date>)
 ```
 
 Re-evaluate Queued on every teardown and every heartbeat: anything whose blocker is gone and whose time/date gate, if any, has arrived gets dispatched.

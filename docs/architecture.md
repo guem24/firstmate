@@ -108,6 +108,7 @@ Landed work is accepted when `HEAD` is reachable from any remote-tracking branch
 PR-head containment covers an exact PR head match, a local `HEAD` that is an ancestor of the PR head, or unpushed local patches whose patch IDs appear in the PR head after no-mistakes replayed the branch.
 GitHub lookup errors fall back to the content check and still refuse if that check is inconclusive.
 Those PR-head and content checks let a squash-merged PR whose head branch was deleted tear down cleanly without using `--force`; `local-only` work instead tears down after the approved local default-branch merge or after the branch is pushed to any remote.
+On the success path only - never on a refusal, never for a secondmate - a ship or scout teardown then archives the task's `data/<id>/` folder into `data/archive/<project>/<id>/` (the basename of the meta `project=` path, or `misc` when unresolvable), sweeping finished tasks off the surface of `data/` with a best-effort, collision-safe move that leaves the source in place rather than clobbering an existing target.
 
 ## Optional X mode
 

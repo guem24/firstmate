@@ -64,6 +64,13 @@ KIND=$(grep '^kind=' "$META" | cut -d= -f2- || true)
 MODE=$(grep '^mode=' "$META" | cut -d= -f2- || true)
 [ -n "$MODE" ] || MODE=no-mistakes
 
+# Project label for the archive subtree: basename of the meta project= path
+# (projects/cadence -> cadence; an absolute firstmate root -> firstmate), or
+# "misc" when unresolvable. Reused by the Done reminder and the archive step.
+ARCHIVE_LABEL=${PROJ%/}
+ARCHIVE_LABEL=${ARCHIVE_LABEL##*/}
+[ -n "$ARCHIVE_LABEL" ] || ARCHIVE_LABEL=misc
+
 default_branch() {
   local ref branch
   ref=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
@@ -227,12 +234,33 @@ work_is_landed() {
   content_in_default
 }
 
+# Move a finished ship/scout task's data folder into a per-project archive subtree
+# so data/ does not accumulate finished tasks at its surface. Runs only on the
+# teardown success path (all safety checks passed), never on a refusal, and never
+# for secondmates. No-ops silently when the folder is absent; on a name collision
+# it leaves the source in place and warns rather than clobbering.
+archive_task_data() {
+  local src="$DATA/$ID" dest="$DATA/archive/$ARCHIVE_LABEL/$ID"
+  # Best-effort junk sweep while we are here.
+  find "$DATA" -name .DS_Store -delete 2>/dev/null || true
+  [ -d "$src" ] || return 0
+  if [ -e "$dest" ]; then
+    echo "warning: archive target $dest already exists; leaving data/$ID in place" >&2
+    return 0
+  fi
+  if ! mkdir -p "$DATA/archive/$ARCHIVE_LABEL" || ! mv "$src" "$dest"; then
+    echo "warning: failed to archive data/$ID -> data/archive/$ARCHIVE_LABEL/$ID; leaving data/$ID in place" >&2
+    return 0
+  fi
+  echo "Archived data/$ID -> data/archive/$ARCHIVE_LABEL/$ID"
+}
+
 backlog_refresh_reminder() {
   local pr done_cmd report_path
   if fm_tasks_axi_backend_available "$CONFIG"; then
     case "$KIND" in
       scout)
-        report_path="data/$ID/report.md"
+        report_path="data/archive/$ARCHIVE_LABEL/$ID/report.md"
         done_cmd="tasks-axi done $ID --report $report_path"
         ;;
       secondmate)
@@ -664,4 +692,9 @@ if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only 
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi
 echo "teardown $ID complete (window $T, worktree $WT)"
+# Ship/scout only: archive the finished task's data folder off the surface of
+# data/. Secondmate teardown leaves its home handling untouched.
+if [ "$KIND" != secondmate ]; then
+  archive_task_data
+fi
 backlog_refresh_reminder
