@@ -54,7 +54,7 @@ make_case() {
   local name=$1 case_dir fakebin
   case_dir="$TMP_ROOT/$name"
   fakebin="$case_dir/fakebin"
-  mkdir -p "$case_dir/state" "$case_dir/config" "$fakebin"
+  mkdir -p "$case_dir/state" "$case_dir/config" "$case_dir/data" "$fakebin"
 
   # Mocks for the post-check teardown steps. Refuse logic exits before these
   # run; the ALLOW cases need them so the script can complete cleanly.
@@ -261,8 +261,20 @@ run_teardown() {
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
   FM_CONFIG_OVERRIDE="$case_dir/config" \
+  FM_DATA_OVERRIDE="$case_dir/data" \
   PATH="$case_dir/fakebin:$PATH" \
     "$TEARDOWN" task-x1 "$@"
+}
+
+# Seed the task's data folder (data/<id>/) with a brief and, for scouts, a report.
+# Args: case_dir [--scout]
+seed_task_data() {
+  local case_dir=$1 scout=${2:-}
+  mkdir -p "$case_dir/data/task-x1"
+  printf '%s\n' "brief for task-x1" > "$case_dir/data/task-x1/brief.md"
+  if [ "$scout" = --scout ]; then
+    printf '%s\n' "findings for task-x1" > "$case_dir/data/task-x1/report.md"
+  fi
 }
 
 test_local_only_fork_remote_allows() {
@@ -638,6 +650,95 @@ test_local_only_force_overrides_unpushed() {
   pass "local-only worktree with unpushed work is torn down under --force (escape hatch)"
 }
 
+test_ship_teardown_archives_data_folder() {
+  local case_dir rc
+  case_dir=$(make_case archive-ship)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "shippable work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+  seed_task_data "$case_dir"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "archive-ship: teardown should succeed when HEAD is on origin"
+  assert_absent "$case_dir/data/task-x1" "archive-ship: data/task-x1 should move off the surface"
+  assert_present "$case_dir/data/archive/project/task-x1/brief.md" \
+    "archive-ship: brief.md should be preserved under the archive path"
+  grep -F 'Archived data/task-x1 -> data/archive/project/task-x1' "$case_dir/stdout" >/dev/null \
+    || fail "archive-ship: teardown did not print the archive line"
+  pass "successful ship teardown archives data/<id> under data/archive/<project>/<id>"
+}
+
+test_refused_teardown_leaves_data_untouched() {
+  local case_dir rc
+  case_dir=$(make_case archive-refuse)
+  write_meta "$case_dir" no-mistakes ship
+  # Genuinely unlanded work: not pushed, no PR, not in default. Teardown refuses.
+  wt_commit_file "$case_dir" feature.txt hello "unpushed work"
+  seed_task_data "$case_dir"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "archive-refuse: teardown should refuse unlanded work"
+  grep -q REFUSED "$case_dir/stderr" || fail "archive-refuse: no REFUSED line in stderr"
+  assert_present "$case_dir/data/task-x1/brief.md" \
+    "archive-refuse: data/task-x1 must stay on the surface after a refusal"
+  assert_absent "$case_dir/data/archive" \
+    "archive-refuse: a refused teardown must create no archive tree"
+  pass "refused teardown leaves data/<id> untouched and creates no archive entry"
+}
+
+test_scout_teardown_archives_report() {
+  local case_dir rc
+  case_dir=$(make_case archive-scout)
+  write_meta "$case_dir" no-mistakes scout
+  seed_task_data "$case_dir" --scout
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "archive-scout: scout teardown should succeed once the report exists"
+  assert_absent "$case_dir/data/task-x1" "archive-scout: scout data/<id> should move off the surface"
+  assert_present "$case_dir/data/archive/project/task-x1/report.md" \
+    "archive-scout: report.md must be preserved under the archive path"
+  pass "successful scout teardown preserves report.md under the archive path"
+}
+
+test_archive_collision_leaves_source_and_warns() {
+  local case_dir rc
+  case_dir=$(make_case archive-collision)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "shippable work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+  seed_task_data "$case_dir"
+  # Pre-existing archive entry with the same project/id must not be clobbered.
+  mkdir -p "$case_dir/data/archive/project/task-x1"
+  printf '%s\n' "older archived brief" > "$case_dir/data/archive/project/task-x1/brief.md"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "archive-collision: teardown should still succeed on a name collision"
+  assert_present "$case_dir/data/task-x1/brief.md" \
+    "archive-collision: source folder must stay in place on collision"
+  grep -q "already exists" "$case_dir/stderr" || fail "archive-collision: no collision warning in stderr"
+  grep -qxF "older archived brief" "$case_dir/data/archive/project/task-x1/brief.md" \
+    || fail "archive-collision: pre-existing archive entry was clobbered"
+  pass "archive collision leaves the source folder in place and warns"
+}
+
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
 test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present
@@ -656,3 +757,7 @@ test_content_in_default_fallback_allows
 test_content_fallback_refreshes_stale_origin_ref
 test_dirty_worktree_refuses
 test_gh_error_and_content_absent_refuses
+test_ship_teardown_archives_data_folder
+test_refused_teardown_leaves_data_untouched
+test_scout_teardown_archives_report
+test_archive_collision_leaves_source_and_warns
