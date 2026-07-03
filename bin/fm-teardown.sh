@@ -248,8 +248,10 @@ archive_task_data() {
     echo "warning: archive target $dest already exists; leaving data/$ID in place" >&2
     return 0
   fi
-  mkdir -p "$DATA/archive/$ARCHIVE_LABEL"
-  mv "$src" "$dest"
+  if ! mkdir -p "$DATA/archive/$ARCHIVE_LABEL" || ! mv "$src" "$dest"; then
+    echo "warning: failed to archive data/$ID -> data/archive/$ARCHIVE_LABEL/$ID; leaving data/$ID in place" >&2
+    return 0
+  fi
   echo "Archived data/$ID -> data/archive/$ARCHIVE_LABEL/$ID"
 }
 
