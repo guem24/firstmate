@@ -15,7 +15,8 @@
 #          A NUDGE_SECONDMATES line lists the RUNNING secondmate windows whose
 #          worktree was fast-forwarded to firstmate's own current default-branch
 #          commit (a purely LOCAL fast-forward, never an origin fetch) AND whose
-#          instruction surface actually changed; firstmate nudges each to re-read.
+#          instruction surface (AGENTS.md, bin/, or .agents/skills/) actually
+#          changed; firstmate nudges each to re-read.
 #          Already-current or no-instruction-change homes are silently left alone.
 #          The secondmate sweep also propagates declared inheritable local config
 #          into each validated live secondmate home.
@@ -41,6 +42,15 @@
 #          recovered and STUCK clone drift, and prunes gone local branches; it is
 #          bounded by FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT, default 20s.
 #          Set FM_FLEET_PRUNE=0 to skip branch pruning during that refresh.
+#          Set FM_BOOTSTRAP_DETECT_ONLY=1 to skip the three MUTATING sweeps
+#          (secondmate_sync, x_mode_setup, fleet_sync) while still printing
+#          every read-only detect line above; the TANGLE line switches to
+#          advisory-only wording with no checkout command. Used by
+#          fm-session-start.sh's read-only path when another live session holds
+#          the fleet lock, so a second concurrent session never race-mutates
+#          secondmate homes, X-mode artifacts, project clones, or repair
+#          instructions. Unset/0 (the default) runs every sweep exactly as
+#          before - this flag is purely additive.
 #        fm-bootstrap.sh install <tool>...
 #          Install the named tools (only ones the captain approved).
 set -u
@@ -61,6 +71,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-config-inherit-lib.sh"
 # shellcheck source=bin/fm-x-lib.sh
 . "$SCRIPT_DIR/fm-x-lib.sh"
+# shellcheck source=bin/fm-backend.sh
+. "$SCRIPT_DIR/fm-backend.sh"
 
 fleet_sync() {
   [ -x "$FM_ROOT/bin/fm-fleet-sync.sh" ] || return 0
@@ -107,10 +119,11 @@ secondmate_sync() {
   # to the primary checkout's current default-branch commit. Purely LOCAL - no
   # fetch, no origin dependency: a secondmate home is a worktree of this same repo
   # and already holds the primary's commit (fm-ff-lib.sh). Emits NUDGE_SECONDMATES:
-  # only for RUNNING secondmates whose instruction surface actually changed, so a
-  # secondmate already on the primary's version is never disturbed (AGENTS.md
-  # bootstrap + supervision). Mirrors fm-update's nudge-secondmates: report so
-  # firstmate can live-converge the listed windows.
+  # only for RUNNING secondmates whose instruction surface (AGENTS.md, bin/, or
+  # .agents/skills/) actually changed, so a secondmate already on the primary's
+  # version is never disturbed (AGENTS.md bootstrap + supervision). Mirrors
+  # fm-update's nudge-secondmates: report so firstmate can live-converge the
+  # listed windows.
   [ -d "$STATE" ] || return 0
   local primary_head
   if ! primary_head=$(primary_head_commit "$FM_ROOT"); then
@@ -164,7 +177,7 @@ secondmate_sync() {
 
 install_cmd() {
   case "$1" in
-    tmux|node|gh|curl|jq) echo "brew install $1  # or the platform's package manager" ;;
+    tmux|node|gh|curl|jq|orca) echo "brew install $1  # or the platform's package manager" ;;
     treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
     gh-axi|chrome-devtools-axi|lavish-axi) echo "npm install -g $1 && $1 setup hooks" ;;
@@ -173,7 +186,11 @@ install_cmd() {
   esac
 }
 
-TOOLS="tmux node gh treehouse no-mistakes gh-axi chrome-devtools-axi lavish-axi"
+BACKEND=$(fm_backend_name)
+case "$BACKEND" in
+  orca) TOOLS="orca node gh no-mistakes gh-axi chrome-devtools-axi lavish-axi" ;;
+  *) TOOLS="tmux node gh treehouse no-mistakes gh-axi chrome-devtools-axi lavish-axi" ;;
+esac
 NO_MISTAKES_MIN_MAJOR=1
 NO_MISTAKES_MIN_MINOR=31
 NO_MISTAKES_MIN_PATCH=2
@@ -396,7 +413,11 @@ gh auth status >/dev/null 2>&1 || echo "NEEDS_GH_AUTH"
 tangle_branch=$(fm_primary_tangle_branch "$FM_ROOT" 2>/dev/null || true)
 if [ -n "$tangle_branch" ]; then
   tangle_default=$(fm_default_branch "$FM_ROOT" 2>/dev/null || echo main)
-  echo "TANGLE: primary checkout on feature branch '$tangle_branch' (expected '$tangle_default'); the work is safe on that ref - restore the primary with: git -C $FM_ROOT checkout $tangle_default, then re-validate the branch in a proper worktree"
+  if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" = 1 ]; then
+    echo "TANGLE: primary checkout on feature branch '$tangle_branch' (expected '$tangle_default'); the work is safe on that ref - read-only session must leave restore work to the session holding the fleet lock"
+  else
+    echo "TANGLE: primary checkout on feature branch '$tangle_branch' (expected '$tangle_default'); the work is safe on that ref - restore the primary with: git -C $FM_ROOT checkout $tangle_default, then re-validate the branch in a proper worktree"
+  fi
 fi
 crew=
 [ -f "$CONFIG/crew-harness" ] && crew=$(tr -d '[:space:]' < "$CONFIG/crew-harness" || true)
@@ -409,7 +430,9 @@ if ! fm_backlog_backend_manual "$CONFIG"; then
     echo "MISSING: tasks-axi (install: $(install_cmd tasks-axi))"
   fi
 fi
-secondmate_sync
-x_mode_setup
-fleet_sync
+if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
+  secondmate_sync
+  x_mode_setup
+  fleet_sync
+fi
 exit 0

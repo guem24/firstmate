@@ -28,7 +28,7 @@
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
 #      agree, and are reported as parked.
 #   4. No run for this crew (pre-validation, or kind=scout): fall back to the
-#      pane busy-signature (fm-tmux-lib.sh) + the status log's last line.
+#      recorded backend's pane busy state, then the status log's last line.
 #   5. Missing meta or torn-down worktree: report unknown · none. If no run is
 #      attributed to this crew, a dead window also reports unknown · none rather
 #      than trusting a stale status log.
@@ -44,6 +44,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
 # shellcheck source=bin/fm-tmux-lib.sh
 . "$SCRIPT_DIR/fm-tmux-lib.sh"
+# shellcheck source=bin/fm-backend.sh
+. "$SCRIPT_DIR/fm-backend.sh"
 
 ID=${1:-}
 [ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
@@ -117,9 +119,57 @@ LOG_VERB=$(log_verb_of "$LOG_LINE")
 # pane_readable is consulted ONLY in the no-run fallback below. The run-step path
 # stays authoritative regardless of pane liveness - judge by the run-step, not the
 # shell - so a finished crew whose window has closed still reports its run-step
-# state (e.g. done) instead of being masked as unknown.
+# state (e.g. done) instead of being masked as unknown. Backend-aware
+# (fm_backend_of_meta defaults absent backend= to tmux, the P1 contract): a
+# herdr task is read through fm_backend_capture instead of a bare tmux probe.
+TASK_BACKEND=$(fm_backend_of_meta "$META")
+EXPECTED_LABEL="fm-$ID"
 pane_readable() {  # <target>
-  tmux display-message -p -t "$1" '#{pane_id}' >/dev/null 2>&1
+  case "$TASK_BACKEND" in
+    tmux) tmux display-message -p -t "$1" '#{pane_id}' >/dev/null 2>&1 ;;
+    *) fm_backend_capture "$TASK_BACKEND" "$1" 1 "$EXPECTED_LABEL" >/dev/null 2>&1 ;;
+  esac
+}
+# crew_pane_is_busy: the busy-signature fallback, backend-aware the same way -
+# fm_backend_busy_state's native semantic state (herdr's agent.get) when
+# available, else the shared tmux pane-regex reader (fm_pane_is_busy,
+# bin/fm-tmux-lib.sh) unchanged for tmux/unknown.
+#
+# `busy` alone is trusted outright. Both `idle` and unknown/unparseable fall
+# through to the shared tail-regex corroboration, NOT just unknown: herdr's
+# agent.get reports generation state ("working" while the model is streaming
+# a turn, "done"/"idle" once it is not - docs/herdr-backend.md "Busy state"),
+# which is a narrower signal than "this crew's turn/tool call is still in
+# progress". A crew blocked on its own long-running foreground tool call (e.g.
+# `no-mistakes axi run` without --yes, which blocks synchronously until a gate
+# or outcome - AGENTS.md section 11) is not generating for that whole span, so
+# agent.get can read idle/blocked (bin/backends/herdr.sh maps both to `idle`)
+# while the pane's own rendered text still shows the harness's busy banner
+# (BUSY_REGEX, e.g. "esc to interrupt") for the entire tool call, exactly like
+# tmux's regex-only reader would correctly report. Trusting herdr's `idle`
+# outright (skipping that corroboration) is what let a still-working crew read
+# as not-busy here, and - combined with a no-mistakes run-step lookup that also
+# missed attribution (see nm_run_id_for_branch) - as not provably working in
+# fm-classify-lib.sh, triggering an immediate (non-wedge) stale wake instead of
+# the absorb-then-escalate path. A genuinely human-blocked agent (a permission
+# dialog, not mid-tool-call) does not render the busy banner, so this
+# corroboration does not mask that case: it stays correctly not-busy.
+crew_pane_is_busy() {  # <target>
+  case "$TASK_BACKEND" in
+    tmux) fm_pane_is_busy "$1" ;;
+    *)
+      local bs tail40
+      bs=$(fm_backend_busy_state "$TASK_BACKEND" "$1" 2>/dev/null)
+      case "$bs" in
+        busy) return 0 ;;
+        *)
+          tail40=$(fm_backend_capture "$TASK_BACKEND" "$1" 40 "$EXPECTED_LABEL" 2>/dev/null) || return 1
+          printf '%s' "$tail40" | grep -v '^[[:space:]]*$' | tail -6 \
+            | grep -qiE "${FM_BUSY_REGEX:-$FM_TMUX_BUSY_REGEX_DEFAULT}"
+          ;;
+      esac
+      ;;
+  esac
 }
 
 # --- no-mistakes run lookup (authoritative when a run matches this branch) --
@@ -355,7 +405,7 @@ pane_readable "$WIN" || emit unknown none "window gone: $WIN"
 
 # Secondmates idle on their own watcher (idle pane = healthy), so the busy
 # signature is not meaningful for them; read their state from the status log only.
-if [ "$KIND" != secondmate ] && fm_pane_is_busy "$WIN"; then
+if [ "$KIND" != secondmate ] && crew_pane_is_busy "$WIN"; then
   emit working pane "harness busy"
 fi
 
