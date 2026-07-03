@@ -522,16 +522,23 @@ run_teardown_case() {
 
 test_teardown_conformance_old_vs_new() {
   local old_bin fb proj wt id
-  local state_old state_new config_old config_new data log_old log_new out_old out_new rc_old rc_new
+  local state_old state_new config_old config_new log_old log_new out_old out_new rc_old rc_new
   old_bin=$(build_old_bin teardown-old)
   proj="$TMP_ROOT/teardown-project"; wt="$TMP_ROOT/teardown-wt"
   id="teardownconform1"
   fm_git_worktree "$proj" "$wt" "fm/$id"
   fb=$(make_teardown_fakebin "$TMP_ROOT/teardown-fake")
 
-  data="$TMP_ROOT/teardown-data"
-  mkdir -p "$data/$id"
-  printf 'scout findings\n' > "$data/$id/report.md"
+  # Isolated data dir per run: a successful scout teardown archives (mv) the
+  # task's data/<id>/ folder off the surface of data/, so the two runs must not
+  # share one data dir or the first run's archive-move would leave the second
+  # run with no report to find. The archive is a plain filesystem move, invisible
+  # to the tmux/treehouse command log this test byte-compares, so both runs still
+  # produce identical command streams.
+  local data_old="$TMP_ROOT/teardown-data-old" data_new="$TMP_ROOT/teardown-data-new"
+  mkdir -p "$data_old/$id" "$data_new/$id"
+  printf 'scout findings\n' > "$data_old/$id/report.md"
+  printf 'scout findings\n' > "$data_new/$id/report.md"
 
   state_old="$TMP_ROOT/teardown-state-old"; state_new="$TMP_ROOT/teardown-state-new"
   config_old="$TMP_ROOT/teardown-config-old"; config_new="$TMP_ROOT/teardown-config-new"
@@ -544,9 +551,9 @@ test_teardown_conformance_old_vs_new() {
   touch "$state_old/.last-watcher-beat" "$state_new/.last-watcher-beat"
 
   log_old="$TMP_ROOT/teardown-old.log"; log_new="$TMP_ROOT/teardown-new.log"
-  out_old=$(run_teardown_case "$old_bin/bin/fm-teardown.sh" "$old_bin" "$fb" "$log_old" "$state_old" "$data" "$config_old" "$id" 2>&1)
+  out_old=$(run_teardown_case "$old_bin/bin/fm-teardown.sh" "$old_bin" "$fb" "$log_old" "$state_old" "$data_old" "$config_old" "$id" 2>&1)
   rc_old=$?
-  out_new=$(run_teardown_case "$ROOT/bin/fm-teardown.sh" "$old_bin" "$fb" "$log_new" "$state_new" "$data" "$config_new" "$id" 2>&1)
+  out_new=$(run_teardown_case "$ROOT/bin/fm-teardown.sh" "$old_bin" "$fb" "$log_new" "$state_new" "$data_new" "$config_new" "$id" 2>&1)
   rc_new=$?
 
   expect_code 0 "$rc_old" "old fm-teardown.sh (scout, report present) should succeed"$'\n'"$out_old"
